@@ -68,7 +68,28 @@ async def mafia(ctx, accion: str, *args):
 
         if len(partida["jugadores"]) == partida["num_jugadores"]:
             await ctx.send("¡La partida está lista! Asignando roles...")
-            
+            await asignar_roles(ctx.channel)
+
+async def asignar_roles(channel):
+    partida = partidas[channel.id]
+    jugadores = partida["jugadores"]
+    num_jugadores = len(jugadores)
+
+    roles = ["Mafioso", "Doctor", "Detective"]
+    roles += ["Ciudadano"] * (num_jugadores - len(roles))
+    random.shuffle(roles)
+
+    rol_asignado = {}
+    for jugador, rol in zip(jugadores, roles):
+        rol_asignado[jugador] = rol
+        try:
+            await jugador.send(f"Tu rol es **{rol}**.")
+        except:
+            await channel.send(f"No pude enviar mensaje privado a {jugador.mention}. Asegúrate de que tienes los DMs activados.")
+
+    partida["roles"] = rol_asignado
+    partida["fase"] = "noche"
+    await channel.send("Los roles han sido asignados en secreto. La partida comienza... 🌕 ¡Es de noche!")
 
 # Iniciar el bot
 bot.run(TOKEN)
