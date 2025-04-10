@@ -38,18 +38,20 @@ async def mafia(ctx, accion: str, *args):
             return
 
         num_jugadores = int(args[0])
-        if num_jugadores < 1 or num_jugadores > 4:
-            await ctx.send("La partida debe tener entre 1 y 4 jugadores.")
+        if num_jugadores < 1:
+            await ctx.send("La partida debe tener al menos 1 jugadores.")
             return
 
         partidas[ctx.channel.id] = {
             "creador": ctx.author,
             "num_jugadores": num_jugadores,
             "jugadores": [],
-            "bots": [],
-            "fase": "esperando"
+            "fase": "esperando",
+            "votos": {},
+            "roles": {},
+            "mafiosos": []
         }
-        await ctx.send(f"Se ha creado una partida de Mafia para {num_jugadores} jugadores. Usa `!mafia unirme` para participar o `!mafia agregar_bot` para añadir bots.")
+        await ctx.send(f"Se ha creado una partida de Mafia para {num_jugadores} jugadores. Usa `!mafia unirme` para participar.")
 
     elif accion == "unirme":
         if ctx.channel.id not in partidas:
@@ -60,38 +62,20 @@ async def mafia(ctx, accion: str, *args):
         if ctx.author in partida["jugadores"]:
             await ctx.send("Ya estás en la partida.")
             return
-        if len(partida["jugadores"]) + len(partida["bots"]) >= partida["num_jugadores"]:
+        if len(partida["jugadores"]) >= partida["num_jugadores"]:
             await ctx.send("La partida ya está completa.")
             return
 
         partida["jugadores"].append(ctx.author)
-        await ctx.send(f"{ctx.author.display_name} se ha unido. Jugadores actuales: {len(partida['jugadores']) + len(partida['bots'])}/{partida['num_jugadores']}")
+        await ctx.send(f"{ctx.author.display_name} se ha unido. Jugadores actuales: {len(partida['jugadores'])}/{partida['num_jugadores']}")
 
-        if len(partida["jugadores"]) + len(partida["bots"]) == partida["num_jugadores"]:
-            await ctx.send("¡La partida está lista! Asignando roles...")
-            await asignar_roles(ctx.channel)
-
-    elif accion == "agregar_bot":
-        if ctx.channel.id not in partidas:
-            await ctx.send("No hay ninguna partida activa en este canal.")
-            return
-
-        partida = partidas[ctx.channel.id]
-        if len(partida["jugadores"]) + len(partida["bots"]) >= partida["num_jugadores"]:
-            await ctx.send("La partida ya está completa.")
-            return
-
-        bot_name = f"Bot_{len(partida['bots']) + 1}"
-        partida["bots"].append(bot_name)
-        await ctx.send(f"{bot_name} se ha unido. Jugadores actuales: {len(partida['jugadores']) + len(partida['bots'])}/{partida['num_jugadores']}")
-
-        if len(partida["jugadores"]) + len(partida["bots"]) == partida["num_jugadores"]:
+        if len(partida["jugadores"]) == partida["num_jugadores"]:
             await ctx.send("¡La partida está lista! Asignando roles...")
             await asignar_roles(ctx.channel)
 
 async def asignar_roles(channel):
     partida = partidas[channel.id]
-    jugadores = partida["jugadores"] + partida["bots"]
+    jugadores = partida["jugadores"]
     num_jugadores = len(jugadores)
 
     roles = ["Mafioso", "Doctor", "Detective"]
@@ -102,58 +86,59 @@ async def asignar_roles(channel):
     mafiosos = []
     for jugador, rol in zip(jugadores, roles):
         rol_asignado[jugador] = rol
-        if isinstance(jugador, discord.Member):
-            try:
-                await jugador.send(f"Tu rol es **{rol}**.")
-            except:
-                await channel.send(f"No pude enviar mensaje privado a {jugador.mention}. Asegúrate de que tienes los DMs activados.")
+        try:
+            await jugador.send(f"Tu rol es **{rol}**.")
+        except:
+            await channel.send(f"No pude enviar mensaje privado a {jugador.mention}. Asegúrate de que tienes los DMs activados.")
         if rol == "Mafioso":
             mafiosos.append(jugador)
 
     partida["roles"] = rol_asignado
     partida["mafiosos"] = mafiosos
-    partida["fase"] = "noche"
-    await channel.send("Los roles han sido asignados en secreto. La partida comienza... 🌙 ¡Es de noche!")
-
-    await procesar_noche(channel)
-
-async def verificar_fin_partida(channel):
-    partida = partidas[channel.id]
-    jugadores = partida["jugadores"] + partida["bots"]
-    mafiosos = [j for j in jugadores if partida["roles"].get(j) == "Mafioso"]
-    ciudadanos = len(jugadores) - len(mafiosos)
-
-    if len(mafiosos) == 0:
-        await channel.send("¡Los ciudadanos han ganado la partida! 🎉")
-        del partidas[channel.id]
-        return True
-    elif len(mafiosos) >= ciudadanos:
-        await channel.send("¡Los mafiosos han ganado la partida! 😈")
-        del partidas[channel.id]
-        return True
-    return False
-
-async def procesar_noche(channel):
-    partida = partidas[channel.id]
-    jugadores = partida["jugadores"] + partida["bots"]
-    mafiosos = partida["mafiosos"]
-
-    if any(isinstance(mafioso, str) for mafioso in mafiosos):
-        victima = random.choice([j for j in jugadores if j not in mafiosos])
-        await channel.send(f"Los mafiosos han elegido eliminar a {victima}.")
-        jugadores.remove(victima)
-        partida["jugadores"] = [j for j in jugadores if isinstance(j, discord.Member)]
-        partida["bots"] = [j for j in jugadores if isinstance(j, str)]
-    
-    if await verificar_fin_partida(channel):
-        return
-    
-    await channel.send("☀️ Amanece, ¡es hora de la votación!")
+    partida["fase"] = "día"
+    await channel.send("Los roles han sido asignados en secreto. La partida comienza... ☀️ ¡Es de día!")
     await procesar_votacion(channel)
 
-async def procesar_votacion(channel):
-    await channel.send("¡Es momento de votar! Usa `!votar <nombre>` para eliminar a un jugador.")
-    # Aquí se puede implementar la lógica de votación real.
+@bot.command()
+async def votar(ctx, jugador: str):
+    if ctx.channel.id not in partidas:
+        await ctx.send("No hay ninguna partida activa en este canal.")
+        return
 
-# Iniciar el bot
+    partida = partidas[ctx.channel.id]
+    if ctx.author not in partida["jugadores"]:
+        await ctx.send("No estás en la partida actual.")
+        return
+
+    partida["votos"][ctx.author] = jugador
+    await ctx.send(f"{ctx.author.display_name} ha votado por eliminar a {jugador}.")
+
+async def procesar_votacion(channel):
+    partida = partidas[channel.id]
+    votos = {}
+    for votante, votado in partida["votos"].items():
+        votos[votado] = votos.get(votado, 0) + 1
+    
+    if not votos:
+        await channel.send("No hubo suficientes votos en esta ronda. Continúa la partida...")
+        return
+
+    eliminado = max(votos, key=votos.get)
+    await channel.send(f"{eliminado} ha sido eliminado. Era {partida['roles'].get(eliminado, 'un desconocido')}.")
+
+    if eliminado in partida["jugadores"]:
+        partida["jugadores"].remove(eliminado)
+    
+    mafiosos_vivos = sum(1 for p in partida["mafiosos"] if p in partida["jugadores"])
+    ciudadanos_vivos = len(partida["jugadores"]) - mafiosos_vivos
+    if mafiosos_vivos == 0:
+        await channel.send("Los ciudadanos han ganado. 🎉")
+        del partidas[channel.id]
+    elif mafiosos_vivos >= ciudadanos_vivos:
+        await channel.send("Los mafiosos han tomado el control. 😈 La mafia gana.")
+        del partidas[channel.id]
+    else:
+        partida["fase"] = "noche"
+        await channel.send("🌙 La noche cae nuevamente...")
+
 bot.run(TOKEN)
