@@ -38,8 +38,8 @@ async def mafia(ctx, accion: str, *args):
             return
 
         num_jugadores = int(args[0])
-        if num_jugadores < 4:
-            await ctx.send("La partida debe tener al menos 4 jugadores.")
+        if num_jugadores < 1:
+            await ctx.send("La partida debe tener al menos 1 a 4 jugadores.")
             return
 
         partidas[ctx.channel.id] = {
@@ -80,16 +80,47 @@ async def asignar_roles(channel):
     random.shuffle(roles)
 
     rol_asignado = {}
+    mafiosos = []
     for jugador, rol in zip(jugadores, roles):
         rol_asignado[jugador] = rol
         try:
             await jugador.send(f"Tu rol es **{rol}**.")
         except:
             await channel.send(f"No pude enviar mensaje privado a {jugador.mention}. Asegúrate de que tienes los DMs activados.")
+        if rol == "Mafioso":
+            mafiosos.append(jugador)
 
     partida["roles"] = rol_asignado
+    partida["mafiosos"] = mafiosos
     partida["fase"] = "noche"
     await channel.send("Los roles han sido asignados en secreto. La partida comienza... 🌕 ¡Es de noche!")
+    await enviar_instrucciones_mafiosos(mafiosos)
+
+async def enviar_instrucciones_mafiosos(mafiosos):
+    for mafioso in mafiosos:
+        try:
+            await mafioso.send("Es de noche. Usa `!matar <nombre>` en este chat privado para elegir a una víctima.")
+        except:
+            print(f"No pude enviar DM a {mafioso.display_name}.")
+
+@bot.command()
+async def matar(ctx, jugador: discord.Member):
+    autor = ctx.author
+    partida = next((p for p in partidas.values() if autor in p.get("mafiosos", [])), None)
+    if not partida:
+        await ctx.send("No estás en una partida activa o no eres mafioso.")
+        return
+
+    if jugador not in partida["jugadores"]:
+        await ctx.send("Ese jugador no está en la partida.")
+        return
+
+    if "victima" in partida:
+        await ctx.send("Ya se ha seleccionado una víctima esta noche.")
+        return
+
+    partida["victima"] = jugador
+    await ctx.send(f"Has elegido eliminar a {jugador.display_name}. Se procesará al amanecer.")
 
 # Iniciar el bot
 bot.run(TOKEN)
