@@ -39,7 +39,7 @@ async def mafia(ctx, accion: str, *args):
 
         num_jugadores = int(args[0])
         if num_jugadores < 2:
-            await ctx.send("La partida debe tener más de 1 jugador o varios jugadores.")
+            await ctx.send("La partida debe tener más de 2 jugadores.")
             return
 
         partidas[ctx.channel.id] = {
