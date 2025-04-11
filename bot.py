@@ -50,7 +50,9 @@ async def mafia(ctx, accion: str, *args):
             "votos": {},
             "roles": {},
             "mafiosos": [],
-            "objetivo_mafia": None
+            "objetivo_mafia": None,
+            "objetivo_doctor": None,
+            "objetivo_detective": None
         }
         await ctx.send(f"Se ha creado una partida de Mafia para {num_jugadores} jugadores. Usa `!mafia unirme` para participar.")
 
@@ -130,8 +132,10 @@ async def procesar_votacion(channel):
     eliminado = max(votos, key=votos.get)
     await channel.send(f"{eliminado} ha sido eliminado. Era {partida['roles'].get(eliminado, 'un desconocido')}.")
 
-    if eliminado in partida["jugadores"]:
-        partida["jugadores"].remove(eliminado)
+    for jugador in partida["jugadores"]:
+        if jugador.display_name == eliminado:
+            partida["jugadores"].remove(jugador)
+            break
 
     mafiosos_vivos = sum(1 for p in partida["mafiosos"] if p in partida["jugadores"])
     ciudadanos_vivos = len(partida["jugadores"]) - mafiosos_vivos
@@ -149,52 +153,85 @@ async def procesar_votacion(channel):
 async def procesar_noche(channel):
     partida = partidas[channel.id]
     partida["objetivo_mafia"] = None
-    for mafioso in partida["mafiosos"]:
-        if mafioso in partida["jugadores"]:
-            try:
-                await mafioso.send("Es de noche. Usa `!matar <nombre>` para decidir a quién eliminar.")
-            except:
-                await channel.send(f"No pude contactar por DM a {mafioso.display_name} para la fase de noche.")
+    partida["objetivo_doctor"] = None
+    partida["objetivo_detective"] = None
+
+    for jugador in partida["jugadores"]:
+        rol = partida["roles"].get(jugador)
+        try:
+            if rol == "Mafioso":
+                await jugador.send("Es de noche. Usa `!matar <nombre>` para decidir a quién eliminar.")
+            elif rol == "Doctor":
+                await jugador.send("Es de noche. Usa `!curar <nombre>` para proteger a alguien.")
+            elif rol == "Detective":
+                await jugador.send("Es de noche. Usa `!investigar <nombre>` para investigar a alguien.")
+        except:
+            await channel.send(f"No pude contactar por DM a {jugador.display_name} para la fase de noche.")
 
 @bot.command()
 async def matar(ctx, objetivo: str):
-    channel_id = None
     for cid, partida in partidas.items():
         if ctx.author in partida["mafiosos"] and partida["fase"] == "noche":
-            channel_id = cid
-            break
-    if not channel_id:
-        await ctx.send("No puedes usar este comando ahora.")
-        return
+            partida["objetivo_mafia"] = objetivo
+            await ctx.send(f"Has seleccionado a {objetivo} como objetivo. Esperando que amanezca...")
+            await finalizar_noche(cid)
+            return
+    await ctx.send("No puedes usar este comando ahora.")
 
-    partida = partidas[channel_id]
-    partida["objetivo_mafia"] = objetivo
-    await ctx.send(f"Has seleccionado a {objetivo} como objetivo. Esperando que amanezca...")
+@bot.command()
+async def curar(ctx, objetivo: str):
+    for cid, partida in partidas.items():
+        if partida["roles"].get(ctx.author) == "Doctor" and partida["fase"] == "noche":
+            partida["objetivo_doctor"] = objetivo
+            await ctx.send(f"Has decidido proteger a {objetivo} esta noche.")
+            await finalizar_noche(cid)
+            return
+    await ctx.send("No puedes usar este comando ahora.")
 
-    await finalizar_noche(channel_id)
+@bot.command()
+async def investigar(ctx, objetivo: str):
+    for cid, partida in partidas.items():
+        if partida["roles"].get(ctx.author) == "Detective" and partida["fase"] == "noche":
+            jugador_investigado = next((j for j in partida["jugadores"] if j.display_name == objetivo), None)
+            if jugador_investigado:
+                es_mafioso = jugador_investigado in partida["mafiosos"]
+                await ctx.author.send(f"{objetivo} {'ES' if es_mafioso else 'NO es'} un mafioso.")
+            else:
+                await ctx.author.send("Ese jugador no está en la partida.")
+            partida["objetivo_detective"] = objetivo
+            await finalizar_noche(cid)
+            return
+    await ctx.send("No puedes usar este comando ahora.")
 
 async def finalizar_noche(channel_id):
     channel = bot.get_channel(channel_id)
     partida = partidas[channel_id]
-    objetivo = partida.get("objetivo_mafia")
-    if objetivo:
-        await channel.send(f"🌅 Amanece y {objetivo} ha sido eliminado durante la noche.")
+    objetivo_mafia = partida.get("objetivo_mafia")
+    objetivo_doctor = partida.get("objetivo_doctor")
+
+    if objetivo_mafia and objetivo_mafia == objetivo_doctor:
+        await channel.send(f"🌅 Amanece y {objetivo_mafia} fue atacado, pero fue salvado por el Doctor. 💉")
+    elif objetivo_mafia:
+        await channel.send(f"🌅 Amanece y {objetivo_mafia} ha sido eliminado durante la noche.")
         for jugador in partida["jugadores"]:
-            if jugador.display_name == objetivo:
+            if jugador.display_name == objetivo_mafia:
                 partida["jugadores"].remove(jugador)
                 break
-        mafiosos_vivos = sum(1 for p in partida["mafiosos"] if p in partida["jugadores"])
-        ciudadanos_vivos = len(partida["jugadores"]) - mafiosos_vivos
-        if mafiosos_vivos == 0:
-            await channel.send("Los ciudadanos han ganado. 🎉")
-            del partidas[channel_id]
-            return
-        elif mafiosos_vivos >= ciudadanos_vivos:
-            await channel.send("Los mafiosos han ganado. 😈")
-            del partidas[channel_id]
-            return
+
     else:
         await channel.send("🌅 Amanece, pero nadie fue eliminado esta noche.")
+
+    mafiosos_vivos = sum(1 for p in partida["mafiosos"] if p in partida["jugadores"])
+    ciudadanos_vivos = len(partida["jugadores"]) - mafiosos_vivos
+
+    if mafiosos_vivos == 0:
+        await channel.send("Los ciudadanos han ganado. 🎉")
+        del partidas[channel_id]
+        return
+    elif mafiosos_vivos >= ciudadanos_vivos:
+        await channel.send("Los mafiosos han ganado. 😈")
+        del partidas[channel_id]
+        return
 
     partida["fase"] = "día"
     partida["votos"] = {}
