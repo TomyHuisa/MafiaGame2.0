@@ -52,7 +52,8 @@ async def mafia(ctx, accion: str, *args):
             "mafiosos": [],
             "objetivo_mafia": None,
             "objetivo_doctor": None,
-            "objetivo_detective": None
+            "objetivo_detective": None,
+            "acciones_noche": set()
         }
         await ctx.send(f"Se ha creado una partida de Mafia para {num_jugadores} jugadores. Usa `!mafia unirme` para participar.")
 
@@ -155,6 +156,7 @@ async def procesar_noche(channel):
     partida["objetivo_mafia"] = None
     partida["objetivo_doctor"] = None
     partida["objetivo_detective"] = None
+    partida["acciones_noche"] = set()
 
     for jugador in partida["jugadores"]:
         rol = partida["roles"].get(jugador)
@@ -173,8 +175,9 @@ async def matar(ctx, objetivo: str):
     for cid, partida in partidas.items():
         if ctx.author in partida["mafiosos"] and partida["fase"] == "noche":
             partida["objetivo_mafia"] = objetivo
-            await ctx.send(f"Has seleccionado a {objetivo} como objetivo. Esperando que amanezca...")
-            await finalizar_noche(cid)
+            partida["acciones_noche"].add(ctx.author)
+            await ctx.send(f"Has seleccionado a {objetivo} como objetivo. Esperando a los demás...")
+            await verificar_acciones_noche(cid)
             return
     await ctx.send("No puedes usar este comando ahora.")
 
@@ -183,8 +186,9 @@ async def curar(ctx, objetivo: str):
     for cid, partida in partidas.items():
         if partida["roles"].get(ctx.author) == "Doctor" and partida["fase"] == "noche":
             partida["objetivo_doctor"] = objetivo
+            partida["acciones_noche"].add(ctx.author)
             await ctx.send(f"Has decidido proteger a {objetivo} esta noche.")
-            await finalizar_noche(cid)
+            await verificar_acciones_noche(cid)
             return
     await ctx.send("No puedes usar este comando ahora.")
 
@@ -199,9 +203,16 @@ async def investigar(ctx, objetivo: str):
             else:
                 await ctx.author.send("Ese jugador no está en la partida.")
             partida["objetivo_detective"] = objetivo
-            await finalizar_noche(cid)
+            partida["acciones_noche"].add(ctx.author)
+            await verificar_acciones_noche(cid)
             return
     await ctx.send("No puedes usar este comando ahora.")
+
+async def verificar_acciones_noche(channel_id):
+    partida = partidas[channel_id]
+    acciones_requeridas = [j for j in partida["jugadores"] if partida["roles"].get(j) in ["Mafioso", "Doctor", "Detective"]]
+    if all(j in partida["acciones_noche"] for j in acciones_requeridas):
+        await finalizar_noche(channel_id)
 
 async def finalizar_noche(channel_id):
     channel = bot.get_channel(channel_id)
@@ -217,7 +228,6 @@ async def finalizar_noche(channel_id):
             if jugador.display_name == objetivo_mafia:
                 partida["jugadores"].remove(jugador)
                 break
-
     else:
         await channel.send("🌅 Amanece, pero nadie fue eliminado esta noche.")
 
